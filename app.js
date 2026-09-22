@@ -4,7 +4,7 @@ const mobile = matchMedia('(max-width: 760px)');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = (n,min=-1,max=1) => Math.max(min,Math.min(max,n));
 // Demo motion tuning: reach full phone response with a small wrist movement.
-const PARALLAX={pointerGain:1.3,tiltX:10,tiltY:13,gyroGamma:8,gyroBeta:10,scrollGain:1.4,swipeGain:5};
+const PARALLAX={pointerGain:1.3,tiltX:6,tiltY:8,gyroGamma:8,gyroBeta:10,scrollGain:1.4,swipeGain:5};
 const escape = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, mode='animation', format='showcards', motion=!reduced.matches;
 let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver, carouselCleanup;
@@ -213,4 +213,4 @@ mobile.addEventListener('change',()=>{if(data)render();});
 window.addEventListener('resize',onScroll,{passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncCarousel();syncBanner();}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
-try{const response=await fetch('manifest.json?v=7');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+try{const response=await fetch('manifest.json?v=9');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
