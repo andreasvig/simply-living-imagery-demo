@@ -14,3 +14,6 @@
 /* Canvas motion already eases each frame; a second CSS easing adds input lag. */
 .parallax-mode .surface{transition:box-shadow .25s;will-change:transform}
 .parallax-mode #content{overflow-x:clip}
+
+/* Phones use layer motion only; the card itself stays flat. */
+@media(max-width:760px){.parallax-mode .surface{transform:none;will-change:auto}}
