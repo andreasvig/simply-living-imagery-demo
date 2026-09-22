@@ -10,6 +10,8 @@ let data, mode='animation', format='showcards', motion=!reduced.matches;
 let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver, carouselCleanup;
 let carouselDragging=false, syncCarousel=()=>{};
 let tiltState='idle', tiltBase=null, tiltX=0, tiltY=0, tiltTimer;
+const motionDebugEnabled=new URLSearchParams(location.search).has('motion-debug');
+const sensorReadings={events:0,count:0,accepted:0,beta:null,gamma:null,lastAt:0};
 const needsTiltPermission = () => typeof window.DeviceOrientationEvent?.requestPermission === 'function';
 function announce(message){$('#announce').textContent=message;}
 function updateMotion(){
@@ -37,7 +39,9 @@ async function enableTilt(fromTap=false){
  tiltUI();
 }
 window.addEventListener('deviceorientation',e=>{
+ if(motionDebugEnabled){sensorReadings.events++;sensorReadings.beta=e.beta;sensorReadings.gamma=e.gamma;if(Number.isFinite(e.beta)&&Number.isFinite(e.gamma)){sensorReadings.count++;sensorReadings.lastAt=Date.now();}}
  if(!mobile.matches||mode!=='parallax'||!motion||document.hidden||!['listening','granted','unavailable'].includes(tiltState)||e.beta==null||e.gamma==null)return;
+ if(motionDebugEnabled)sensorReadings.accepted++;
  tiltState='granted';clearTimeout(tiltTimer);tiltUI();
  if(!tiltBase)tiltBase={beta:e.beta,gamma:e.gamma};
  const wrap=n=>((n+540)%360)-180, angle=(screen.orientation?.angle||0)*Math.PI/180;
@@ -98,7 +102,12 @@ function mount(node,item){
   tx=0;ty=0;swipeX=0;
   clearTimeout(resetTimer);resetTimer=setTimeout(()=>{video?.pause();if(video?.readyState)video.currentTime=0;surface.style.removeProperty('--rx');surface.style.removeProperty('--ry');},360);
  }
- const api={node,start,stop,preload(){if(type==='video'&&mobile.matches&&motion&&!disposed)prepare();},get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
+ function inspectMotion(){
+  if(type!=='parallax'||!images)return null;
+  const layer=item.layers.reduce((a,b)=>a.z>b.z?a:b),base=placement(item,layer,0,0),position=placement(item,layer,x,y),scale=surface.clientWidth/item.width;
+  return {label:item.label,dx:(position[0]-base[0])*scale,dy:(position[1]-base[1])*scale};
+ }
+ const api={node,start,stop,inspectMotion,preload(){if(type==='video'&&mobile.matches&&motion&&!disposed)prepare();},get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
  node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&!carouselDragging&&type!=='video')start();});
  node.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&type!=='video'){stop();syncBanner();}});
  node.addEventListener('focus',()=>{if(node.matches(':focus-visible'))start();});node.addEventListener('blur',()=>{if(!mobile.matches)stop();});
@@ -213,4 +222,9 @@ mobile.addEventListener('change',()=>{if(data)render();});
 window.addEventListener('resize',onScroll,{passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncCarousel();syncBanner();}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
-try{const response=await fetch('manifest.json?v=9');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+if(motionDebugEnabled)import('./motion-debug.mjs?v=11').then(({mountMotionDebug})=>mountMotionDebug({
+ read:()=>({...sensorReadings,state:tiltState,motion,mobile:mobile.matches,mode,x:tiltX,y:tiltY,card:nearest()?.inspectMotion()}),
+ retry:()=>enableTilt(true),
+ recenter:()=>{tiltBase=null;tiltX=tiltY=0;controllers.forEach(c=>c.sensor(0,0));}
+})).catch(()=>announce('The motion diagnostic panel could not load. Please refresh.'));
+try{const response=await fetch('manifest.json?v=11');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
