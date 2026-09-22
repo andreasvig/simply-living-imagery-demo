@@ -1,4 +1,4 @@
-import {motionPlacement as placement, prepareMotion} from './parallax-motion.mjs';
+import {motionPlacement as placement, prepareMotion} from './parallax-motion.mjs?v=10';
 const $ = (s, root=document) => root.querySelector(s);
 const mobile = matchMedia('(max-width: 760px)');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');

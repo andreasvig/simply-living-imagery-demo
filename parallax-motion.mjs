@@ -1,11 +1,11 @@
 // Shared by the workbench, motion playground and static GitHub Pages demo.
-export const MOTION = Object.freeze({version:1, strength:3, fraction:.025, minorAxis:.4});
+export const MOTION = Object.freeze({version:1, strength:3, fraction:.025, minorAxis:.4, showcardHorizontal:2/3});
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const keys=['left','right','up','down'];
 const blank=()=>Object.fromEntries(keys.map(k=>[k,Infinity]));
 export function axisFractions(scene,strength=MOTION.strength){
  const f=MOTION.fraction*strength;
- return scene.height>scene.width?{x:f*MOTION.minorAxis,y:f}:scene.width>scene.height?{x:f,y:f*MOTION.minorAxis}:{x:f,y:f};
+ return scene.height>scene.width?{x:f*MOTION.minorAxis,y:f}:scene.width>scene.height?{x:f*MOTION.showcardHorizontal,y:f*MOTION.minorAxis}:{x:f,y:f};
 }
 export function depth(scene,layer){
  const zs=scene.layers?.map(l=>l.z)??[0,1],lo=Math.min(0,...zs),hi=Math.max(...zs);
