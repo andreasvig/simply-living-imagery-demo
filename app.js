@@ -4,7 +4,8 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = (n,min=-1,max=1) => Math.max(min,Math.min(max,n));
 const escape = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, mode='animation', format='showcards', motion=!reduced.matches;
-let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver;
+let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver, carouselCleanup;
+let carouselDragging=false;
 let tiltState='idle', tiltBase=null, tiltX=0, tiltY=0, tiltTimer;
 const needsTiltPermission = () => typeof window.DeviceOrientationEvent?.requestPermission === 'function';
 function announce(message){$('#announce').textContent=message;}
@@ -50,9 +51,9 @@ for(const b of document.querySelectorAll('[data-mode]'))b.onclick=()=>{
 };
 function card(i){
  const t=mode==='animation'?'video':'parallax';
- return `<button class="card ${format==='covers'?'portrait':''}" data-id="${i.id}" data-type="${t}" aria-label="${escape(i.label)} · ${t==='video'?'animate':'explore depth'}" aria-pressed="false"><div class="surface"><img src="${i.cover}" alt="${escape(i.label)}" loading="lazy" decoding="async"><span class="badge"><i>${t==='video'?'↻':'◇'}</i>${t==='video'?'ANIMATED':'PARALLAX'}</span></div><div class="caption"><div><strong>${escape(i.title.split(':')[0])}</strong><p>${escape(i.label.split(' · ')[1]||'')}</p></div><small>${i.kind}</small></div></button>`;
+ return `<button class="card ${format==='covers'?'portrait':''}" data-id="${i.id}" data-type="${t}" aria-label="${escape(i.label)} · ${t==='video'?'animate':'explore depth'}" aria-pressed="false"><div class="surface"><img src="${mode==='parallax'&&!mobile.matches?(i.neutral||i.cover):i.cover}" alt="${escape(i.label)}" loading="lazy" decoding="async"><span class="badge"><i>${t==='video'?'↻':'◇'}</i>${t==='video'?'ANIMATED':'PARALLAX'}</span></div><div class="caption"><div><strong>${escape(i.title.split(':')[0])}</strong><p>${escape(i.label.split(' · ')[1]||'')}</p></div><small>${i.kind}</small></div></button>`;
 }
-function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/banner.webp" alt="Sintel, a Blender Foundation open film" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · SHORT FILM</p><h1>Sintel</h1><div class="metadata"><span>OPEN MOVIE</span><span>2010</span><span>Fantasy</span><span>Adventure</span></div><p>A young traveller crosses an unforgiving world in search of the dragon she once saved.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
+function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/banner.webp" alt="Sintel, a Blender Foundation open film" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · SHORT FILM</p><h1>Sintel <small>(random film)</small></h1><div class="metadata"><span>OPEN MOVIE</span><span>2010</span><span>Fantasy</span><span>Adventure</span></div><p>A young traveller crosses an unforgiving world in search of the dragon she once saved.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
 function placement(i,l,x,y){
  const w=i.width,h=i.height,m=i.motion_fraction;let dx=x*w*m*l.z,dy=y*h*m*l.z*.4;
  if(i.asset_canvas){const c=i.asset_canvas,v=l.motion_limits;if(v){dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}return[-c.padding_x+Math.round(dx),-c.padding_y+Math.round(dy),c.width,c.height];}
@@ -88,7 +89,7 @@ function mount(node,item){
  async function start(){
   if(active||!motion||disposed||document.hidden)return;
   if(type==='video'){current?.stop();current=api;banner?.pause();}
-  active=true;const token=++epoch;clearTimeout(resetTimer);$('.error',surface)?.remove();busy(true);
+  active=true;const token=++epoch;clearTimeout(resetTimer);$('.error',surface)?.remove();busy(type==='video'||!images);
   try{if(type==='video'){prepare();await video.play();}else await load();if(disposed||!active||epoch!==token)return;busy(false);show(true);if(type==='parallax'){cancelAnimationFrame(raf);draw();}}
   catch{if(active&&epoch===token)fail();}
  }
@@ -99,7 +100,7 @@ function mount(node,item){
   clearTimeout(resetTimer);resetTimer=setTimeout(()=>{video?.pause();if(video?.readyState)video.currentTime=0;surface.style.removeProperty('--rx');surface.style.removeProperty('--ry');},360);
  }
  const api={node,start,stop,get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
- node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches)start();});
+ node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&!carouselDragging)start();});
  node.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&!mobile.matches){stop();syncBanner();}});
  node.addEventListener('focus',()=>{if(node.matches(':focus-visible'))start();});node.addEventListener('blur',()=>{if(!mobile.matches)stop();});
  node.addEventListener('click',()=>{if(moved){moved=false;return;}if(type==='parallax'&&mobile.matches){enableTilt(true);start();}else active?stop():start();});
@@ -111,6 +112,7 @@ function mount(node,item){
  });
  node.addEventListener('pointerup',()=>{drag=null;});node.addEventListener('pointercancel',()=>{drag=null;});
  const observer=new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)stop();},{threshold:0});observer.observe(node);
+ if(type==='parallax'&&!mobile.matches){load().then(()=>{if(disposed)return;node.classList.add('neutral-ready');if(!active)draw();}).catch(()=>{/* Keep the neutral poster if a layer cannot load. */});}
  return api;
 }
 function nearest(){
@@ -135,15 +137,49 @@ function syncBanner(){
  if(!mobile.matches&&motion&&!current&&!bannerPaused&&!document.hidden&&r.bottom>100){banner.play().then(()=>{if(!banner.paused){$('.hero-art')?.classList.add('playing');$('#banner-toggle').textContent='Ⅱ Pause preview';$('#banner-toggle').setAttribute('aria-pressed','true');}}).catch(()=>{$('#banner-toggle').textContent='▷ Play preview';});}
  else banner.pause();
 }
+function mountCarousel(){
+ const row=$('.items'),wrap=$('.carousel'),prev=$('.previous',wrap),next=$('.next',wrap);
+ let drag=null,suppressClick=false,resetClickTimer;
+ function update(){
+  const max=row.scrollWidth-row.clientWidth;
+  prev.disabled=row.scrollLeft<2;next.disabled=row.scrollLeft>max-2;
+  wrap.classList.toggle('can-scroll',max>2);
+  wrap.style.setProperty('--arrow-y',`${($('.surface',row)?.offsetHeight||0)/2+8}px`);
+ }
+ const observer=new ResizeObserver(update);observer.observe(row);row.addEventListener('scroll',update,{passive:true});
+ for(const b of [prev,next])b.onclick=()=>row.scrollBy({left:row.clientWidth*.75*Number(b.dataset.scroll),behavior:reduced.matches?'instant':'smooth'});
+ row.addEventListener('dragstart',e=>e.preventDefault());
+ row.addEventListener('pointerdown',e=>{
+  if(mobile.matches||mode!=='animation'||e.pointerType!=='mouse'||e.button!==0||row.scrollWidth<=row.clientWidth+2)return;
+  clearTimeout(resetClickTimer);suppressClick=false;drag={id:e.pointerId,x:e.clientX,left:row.scrollLeft};
+ });
+ row.addEventListener('pointermove',e=>{
+  if(!drag)return;const delta=e.clientX-drag.x;
+  if(!carouselDragging&&Math.abs(delta)>6){carouselDragging=true;suppressClick=true;row.classList.add('dragging');controllers.forEach(c=>c.stop());row.setPointerCapture(e.pointerId);}
+  if(carouselDragging){e.preventDefault();row.scrollLeft=drag.left-delta;}
+ });
+ function finish(){
+  if(!drag)return;const id=drag.id;drag=null;
+  if(row.hasPointerCapture(id))row.releasePointerCapture(id);
+  carouselDragging=false;row.classList.remove('dragging');
+  // The click synthesized after pointerup must not toggle the card.
+  resetClickTimer=setTimeout(()=>{suppressClick=false;},0);
+ }
+ row.addEventListener('pointerup',finish);row.addEventListener('pointercancel',finish);row.addEventListener('lostpointercapture',finish);
+ row.addEventListener('pointerleave',()=>{if(drag&&!carouselDragging)finish();});
+ row.addEventListener('click',e=>{if(suppressClick){e.preventDefault();e.stopImmediatePropagation();suppressClick=false;}},true);
+ update();return()=>{observer.disconnect();clearTimeout(resetClickTimer);};
+}
 function render(){
- controllers.forEach(c=>c.dispose());controllers=[];current=null;banner?.pause();banner=null;bannerObserver?.disconnect();clearTimeout(settleTimer);
+ carouselCleanup?.();carouselDragging=false;controllers.forEach(c=>c.dispose());controllers=[];current=null;banner?.pause();banner=null;bannerObserver?.disconnect();clearTimeout(settleTimer);
  document.body.classList.toggle('parallax-mode',mode==='parallax');
  document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+ document.querySelectorAll('[data-format]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.format===format)));
  const items=(mode==='animation'?data.animations:data.parallax).filter(i=>format==='covers'?i.width<i.height:i.width>i.height);
- $('#content').innerHTML=(mode==='animation'?hero():'')+`<section class="collection" id="collection"><div class="filterbar" role="group" aria-label="Artwork format"><button data-format="covers" aria-pressed="${format==='covers'}">Covers</button><button data-format="showcards" aria-pressed="${format==='showcards'}">Showcards</button><button id="tilt" class="tilt-button" hidden>Enable motion</button></div><div class="section-heading"><div><h2>${mode==='animation'?'In motion':'A different dimension'}<small>${items.length}</small></h2><p>${mode==='animation'?'<span class="desktop-hint">Hover to bring the artwork to life.</span><span class="mobile-hint">Scroll to explore. Pause on a cover to bring it to life.</span>':'<span class="desktop-hint">Move across the artwork. Discover another layer.</span><span class="mobile-hint">Scroll, tilt your phone, or swipe sideways.</span>'}</p></div><div class="row-controls"><button aria-label="Previous artwork" data-scroll="-1">‹</button><button aria-label="Next artwork" data-scroll="1">›</button></div></div><p id="tilt-status" class="tilt-status"></p><div class="items ${format}">${items.map(card).join('')}</div></section>`;
+ $('#content').innerHTML=(mode==='animation'?hero():'')+`<section class="collection" id="collection"><button id="tilt" class="tilt-button" hidden>Enable motion</button><div class="section-heading"><div><h2>${mode==='animation'?'In motion':'A different dimension'}<small>${items.length}</small></h2><p>${mode==='animation'?'<span class="desktop-hint">Hover to bring the artwork to life.</span><span class="mobile-hint">Scroll to explore. Pause on a cover to bring it to life.</span>':'<span class="desktop-hint">Move across the artwork. Discover another layer.</span><span class="mobile-hint">Scroll, tilt your phone, or swipe sideways.</span>'}</p></div></div><p id="tilt-status" class="tilt-status"></p><div class="carousel"><div class="items ${format}">${items.map(card).join('')}</div><button class="carousel-arrow previous" aria-label="Previous artwork" data-scroll="-1">‹</button><button class="carousel-arrow next" aria-label="Next artwork" data-scroll="1">›</button></div></section>`;
  document.querySelectorAll('[data-format]').forEach(b=>b.onclick=()=>navigate(mode,b.dataset.format));
  document.querySelectorAll('.card').forEach(n=>controllers.push(mount(n,items.find(i=>i.id===n.dataset.id))));
- document.querySelectorAll('[data-scroll]').forEach(b=>b.onclick=()=>$('.items').scrollBy({left:$('.items').clientWidth*.75*Number(b.dataset.scroll),behavior:'smooth'}));
+ carouselCleanup=mountCarousel();
  $('#tilt').onclick=()=>enableTilt(true);
  if(mode==='animation'){
   $('#explore').onclick=e=>{e.preventDefault();$('#collection').scrollIntoView({behavior:reduced.matches?'instant':'smooth'});};
@@ -158,4 +194,4 @@ mobile.addEventListener('change',()=>{if(data)render();});
 window.addEventListener('resize',onScroll,{passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncBanner();}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
-try{const response=await fetch('manifest.json');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+try{const response=await fetch('manifest.json?v=3');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
