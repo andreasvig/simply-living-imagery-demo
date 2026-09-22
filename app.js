@@ -212,4 +212,4 @@ mobile.addEventListener('change',()=>{if(data)render();});
 window.addEventListener('resize',onScroll,{passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncCarousel();syncBanner();}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
-try{const response=await fetch('manifest.json?v=4');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+try{const response=await fetch('manifest.json?v=5');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
