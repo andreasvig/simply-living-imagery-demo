@@ -227,4 +227,4 @@ if(motionDebugEnabled)import('./motion-debug.mjs?v=11').then(({mountMotionDebug}
  retry:()=>enableTilt(true),
  recenter:()=>{tiltBase=null;tiltX=tiltY=0;controllers.forEach(c=>c.sensor(0,0));}
 })).catch(()=>announce('The motion diagnostic panel could not load. Please refresh.'));
-try{const response=await fetch('manifest.json?v=11');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+try{const response=await fetch('manifest.json?v=12');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
