@@ -5,14 +5,14 @@ const clamp = (n,min=-1,max=1) => Math.max(min,Math.min(max,n));
 const escape = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, mode='animation', format='showcards', motion=!reduced.matches;
 let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver, carouselCleanup;
-let carouselDragging=false;
+let carouselDragging=false, syncCarousel=()=>{};
 let tiltState='idle', tiltBase=null, tiltX=0, tiltY=0, tiltTimer;
 const needsTiltPermission = () => typeof window.DeviceOrientationEvent?.requestPermission === 'function';
 function announce(message){$('#announce').textContent=message;}
 function updateMotion(){
  $('#motion').setAttribute('aria-pressed',String(motion));$('#motion').setAttribute('aria-label',`Motion ${motion?'on':'off'}`);$('#motion-label').textContent=`Motion ${motion?'on':'off'}`;
 }
-$('#motion').onclick=()=>{motion=!motion;updateMotion();if(!motion){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncBanner();}};
+$('#motion').onclick=()=>{motion=!motion;updateMotion();if(!motion){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncCarousel();syncBanner();}};
 updateMotion();
 function tiltUI(){
  const b=$('#tilt');if(!b)return;
@@ -53,7 +53,7 @@ function card(i){
  const t=mode==='animation'?'video':'parallax';
  return `<button class="card ${format==='covers'?'portrait':''}" data-id="${i.id}" data-type="${t}" aria-label="${escape(i.label)} · ${t==='video'?'animate':'explore depth'}" aria-pressed="false"><div class="surface"><img src="${mode==='parallax'&&!mobile.matches?(i.neutral||i.cover):i.cover}" alt="${escape(i.label)}" loading="lazy" decoding="async"><span class="badge"><i>${t==='video'?'↻':'◇'}</i>${t==='video'?'ANIMATED':'PARALLAX'}</span></div><div class="caption"><div><strong>${escape(i.title.split(':')[0])}</strong><p>${escape(i.label.split(' · ')[1]||'')}</p></div><small>${i.kind}</small></div></button>`;
 }
-function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/banner.webp" alt="Sintel, a Blender Foundation open film" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · SHORT FILM</p><h1>Sintel <small>(random film)</small></h1><div class="metadata"><span>OPEN MOVIE</span><span>2010</span><span>Fantasy</span><span>Adventure</span></div><p>A young traveller crosses an unforgiving world in search of the dragon she once saved.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
+function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/die-hard-banner.webp" alt="Die Hard trailer" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · MOVIE</p><h1>Die Hard <small>(random film)</small></h1><div class="metadata"><span>R</span><span>1988</span><span>Action</span><span>2h 12m</span></div><p>A New York cop. A Los Angeles skyscraper. When terrorists take over his wife’s Christmas party, John McClane is the one guest they didn’t plan for.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
 function placement(i,l,x,y){
  const w=i.width,h=i.height,m=i.motion_fraction;let dx=x*w*m*l.z,dy=y*h*m*l.z*.4;
  if(i.asset_canvas){const c=i.asset_canvas,v=l.motion_limits;if(v){dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}return[-c.padding_x+Math.round(dx),-c.padding_y+Math.round(dy),c.width,c.height];}
@@ -100,8 +100,8 @@ function mount(node,item){
   clearTimeout(resetTimer);resetTimer=setTimeout(()=>{video?.pause();if(video?.readyState)video.currentTime=0;surface.style.removeProperty('--rx');surface.style.removeProperty('--ry');},360);
  }
  const api={node,start,stop,get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
- node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&!carouselDragging)start();});
- node.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&!mobile.matches){stop();syncBanner();}});
+ node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&!carouselDragging&&type!=='video')start();});
+ node.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&type!=='video'){stop();syncBanner();}});
  node.addEventListener('focus',()=>{if(node.matches(':focus-visible'))start();});node.addEventListener('blur',()=>{if(!mobile.matches)stop();});
  node.addEventListener('click',()=>{if(moved){moved=false;return;}if(type==='parallax'&&mobile.matches){enableTilt(true);start();}else active?stop():start();});
  node.addEventListener('pointerdown',e=>{moved=false;if(type==='parallax'&&e.pointerType!=='mouse')drag={x:e.clientX,y:e.clientY,start:swipeX};});
@@ -128,7 +128,7 @@ function syncMobile(settled=true){
  }
 }
 function onScroll(){
- clearTimeout(settleTimer);if(!scrollFrame)scrollFrame=requestAnimationFrame(()=>{scrollFrame=null;syncMobile(false);});
+ clearTimeout(settleTimer);if(!scrollFrame)scrollFrame=requestAnimationFrame(()=>{scrollFrame=null;syncMobile(false);syncCarousel();});
  settleTimer=setTimeout(()=>syncMobile(true),240);
 }
 let bannerPaused=false;
@@ -138,16 +138,34 @@ function syncBanner(){
  else banner.pause();
 }
 function mountCarousel(){
- const row=$('.items'),wrap=$('.carousel'),prev=$('.previous',wrap),next=$('.next',wrap);
- let drag=null,suppressClick=false,resetClickTimer;
+ const row=$('.items'),wrap=$('.carousel'),zone=$('.collection'),prev=$('.previous',wrap),next=$('.next',wrap);
+ let drag=null,suppressClick=false,resetClickTimer,pointer=null,hoverFrame;
+ function syncHover(){
+  if(mobile.matches||mode!=='animation'||carouselDragging||!pointer)return;
+  const hit=document.elementFromPoint(pointer.x,pointer.y);
+  if(!hit||!zone.contains(hit)){pointer=null;current?.stop();syncBanner();return;}
+  if(!motion||document.hidden)return;
+  const hovered=hit.closest('.card');
+  const bounds=row.getBoundingClientRect();
+  const chosen=controllers.find(c=>c.node===hovered)||controllers.find(c=>{
+   const r=c.node.getBoundingClientRect();
+   return r.left>=Math.max(0,bounds.left)-1&&r.right<=Math.min(innerWidth,bounds.right)+1&&r.bottom>0&&r.top<innerHeight;
+  });
+  if(chosen)chosen.start();else{current?.stop();syncBanner();}
+ }
+ function scheduleHover(){cancelAnimationFrame(hoverFrame);hoverFrame=requestAnimationFrame(syncHover);}
+ syncCarousel=syncHover;
+ zone.addEventListener('pointermove',e=>{if(e.pointerType==='mouse'){pointer={x:e.clientX,y:e.clientY};scheduleHover();}});
+ zone.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'){pointer={x:e.clientX,y:e.clientY};scheduleHover();}});
+ zone.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&mode==='animation'&&!mobile.matches){pointer=null;current?.stop();syncBanner();}});
  function update(){
   const max=row.scrollWidth-row.clientWidth;
   prev.disabled=row.scrollLeft<2;next.disabled=row.scrollLeft>max-2;
   wrap.classList.toggle('can-scroll',max>2);
-  wrap.style.setProperty('--arrow-y',`${($('.surface',row)?.offsetHeight||0)/2+8}px`);
+  wrap.style.setProperty('--arrow-y',`${($('.surface',row)?.offsetHeight||0)/2+8}px`);scheduleHover();
  }
  const observer=new ResizeObserver(update);observer.observe(row);row.addEventListener('scroll',update,{passive:true});
- for(const b of [prev,next])b.onclick=()=>row.scrollBy({left:row.clientWidth*.75*Number(b.dataset.scroll),behavior:reduced.matches?'instant':'smooth'});
+ for(const b of [prev,next])b.onclick=()=>row.scrollBy({left:(($('.card',row)?.getBoundingClientRect().width||0)+parseFloat(getComputedStyle(row).columnGap))*Number(b.dataset.scroll),behavior:reduced.matches?'instant':'smooth'});
  row.addEventListener('dragstart',e=>e.preventDefault());
  row.addEventListener('pointerdown',e=>{
   if(mobile.matches||mode!=='animation'||e.pointerType!=='mouse'||e.button!==0||row.scrollWidth<=row.clientWidth+2)return;
@@ -161,14 +179,14 @@ function mountCarousel(){
  function finish(){
   if(!drag)return;const id=drag.id;drag=null;
   if(row.hasPointerCapture(id))row.releasePointerCapture(id);
-  carouselDragging=false;row.classList.remove('dragging');
+  carouselDragging=false;row.classList.remove('dragging');scheduleHover();
   // The click synthesized after pointerup must not toggle the card.
   resetClickTimer=setTimeout(()=>{suppressClick=false;},0);
  }
  row.addEventListener('pointerup',finish);row.addEventListener('pointercancel',finish);row.addEventListener('lostpointercapture',finish);
  row.addEventListener('pointerleave',()=>{if(drag&&!carouselDragging)finish();});
  row.addEventListener('click',e=>{if(suppressClick){e.preventDefault();e.stopImmediatePropagation();suppressClick=false;}},true);
- update();return()=>{observer.disconnect();clearTimeout(resetClickTimer);};
+ update();return()=>{observer.disconnect();clearTimeout(resetClickTimer);cancelAnimationFrame(hoverFrame);syncCarousel=()=>{};};
 }
 function render(){
  carouselCleanup?.();carouselDragging=false;controllers.forEach(c=>c.dispose());controllers=[];current=null;banner?.pause();banner=null;bannerObserver?.disconnect();clearTimeout(settleTimer);
@@ -183,7 +201,7 @@ function render(){
  $('#tilt').onclick=()=>enableTilt(true);
  if(mode==='animation'){
   $('#explore').onclick=e=>{e.preventDefault();$('#collection').scrollIntoView({behavior:reduced.matches?'instant':'smooth'});};
-  if(!mobile.matches){banner=document.createElement('video');banner.muted=true;banner.playsInline=true;banner.loop=true;banner.src='assets/banner.mp4';$('.hero-art').prepend(banner);bannerObserver=new IntersectionObserver(syncBanner,{threshold:0});bannerObserver.observe($('.hero'));syncBanner();}
+  if(!mobile.matches){banner=document.createElement('video');banner.muted=true;banner.playsInline=true;banner.loop=true;banner.src='assets/die-hard-banner.mp4';$('.hero-art').prepend(banner);bannerObserver=new IntersectionObserver(syncBanner,{threshold:0});bannerObserver.observe($('.hero'));syncBanner();}
   $('#banner-toggle').onclick=()=>{bannerPaused=!bannerPaused;syncBanner();$('#banner-toggle').textContent=bannerPaused?'▷ Play preview':'Ⅱ Pause preview';$('#banner-toggle').setAttribute('aria-pressed',String(!bannerPaused));};
  }else enableTilt(false);
  tiltUI();window.scrollTo({top:0,behavior:'instant'});settleTimer=setTimeout(()=>syncMobile(true),300);
@@ -192,6 +210,6 @@ window.addEventListener('scroll',onScroll,{passive:true});
 window.addEventListener('hashchange',()=>{if(!data)return;readRoute();render();});
 mobile.addEventListener('change',()=>{if(data)render();});
 window.addEventListener('resize',onScroll,{passive:true});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncBanner();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncCarousel();syncBanner();}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
-try{const response=await fetch('manifest.json?v=3');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+try{const response=await fetch('manifest.json?v=4');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
