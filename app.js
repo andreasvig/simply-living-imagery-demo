@@ -2,6 +2,8 @@ const $ = (s, root=document) => root.querySelector(s);
 const mobile = matchMedia('(max-width: 760px)');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = (n,min=-1,max=1) => Math.max(min,Math.min(max,n));
+// Demo motion tuning: reach full phone response with a small wrist movement.
+const PARALLAX={pointerGain:1.3,legacyLayerGain:2.5,verticalGain:.75,tiltX:18,tiltY:22,gyroGamma:8,gyroBeta:10,scrollGain:1.4,swipeGain:5};
 const escape = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, mode='animation', format='showcards', motion=!reduced.matches;
 let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver, carouselCleanup;
@@ -38,7 +40,7 @@ window.addEventListener('deviceorientation',e=>{
  tiltState='granted';clearTimeout(tiltTimer);tiltUI();
  if(!tiltBase)tiltBase={beta:e.beta,gamma:e.gamma};
  const wrap=n=>((n+540)%360)-180, angle=(screen.orientation?.angle||0)*Math.PI/180;
- const gx=wrap(e.gamma-tiltBase.gamma)/22,gy=wrap(e.beta-tiltBase.beta)/25;
+ const gx=wrap(e.gamma-tiltBase.gamma)/PARALLAX.gyroGamma,gy=wrap(e.beta-tiltBase.beta)/PARALLAX.gyroBeta;
  tiltX=clamp(gx*Math.cos(angle)+gy*Math.sin(angle));tiltY=clamp(gy*Math.cos(angle)-gx*Math.sin(angle));
  controllers.forEach(c=>c.sensor(tiltX,tiltY));
 });
@@ -55,8 +57,9 @@ function card(i){
 }
 function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/die-hard-banner.webp" alt="Die Hard trailer" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · MOVIE</p><h1>Die Hard <small>(random film)</small></h1><div class="metadata"><span>R</span><span>1988</span><span>Action</span><span>2h 12m</span></div><p>A New York cop. A Los Angeles skyscraper. When terrorists take over his wife’s Christmas party, John McClane is the one guest they didn’t plan for.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
 function placement(i,l,x,y){
- const w=i.width,h=i.height,m=i.motion_fraction;let dx=x*w*m*l.z,dy=y*h*m*l.z*.4;
+ const w=i.width,h=i.height,m=i.motion_fraction,gain=i.asset_canvas?1:PARALLAX.legacyLayerGain;let dx=x*w*m*l.z*gain,dy=y*h*m*l.z*gain*PARALLAX.verticalGain;
  if(i.asset_canvas){const c=i.asset_canvas,v=l.motion_limits;if(v){dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}return[-c.padding_x+Math.round(dx),-c.padding_y+Math.round(dy),c.width,c.height];}
+ if(l.motion_limits){const v=l.motion_limits;dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}
  const scale=l.overscan===false?1:1+2*m,sw=Math.round(w*scale),sh=Math.round(h*scale);return[Math.floor((w-sw)/2)+Math.round(dx),Math.floor((h-sh)/2)+Math.round(dy),sw,sh];
 }
 function mount(node,item){
@@ -65,13 +68,13 @@ function mount(node,item){
  let x=0,y=0,tx=0,ty=0,drag=null,moved=false,swipeX=0,scrollY=0,sensorX=0,sensorY=0;
  const busy=v=>{$('.status',surface)?.remove();if(v)surface.insertAdjacentHTML('beforeend','<span class="status"><span class="spinner"></span></span>');node.setAttribute('aria-busy',String(v));};
  const show=v=>{node.classList.toggle('active',v);node.setAttribute('aria-pressed',String(v));};
- function targets(){tx=clamp(swipeX+sensorX);ty=clamp(scrollY*.65+sensorY*.65);}
+ function targets(){tx=clamp(swipeX+sensorX);ty=clamp(scrollY*PARALLAX.scrollGain+sensorY);}
  function draw(){
   if(disposed||!images)return;
-  x+=(tx-x)*.075;y+=(ty-y)*.075;
+  x+=(tx-x)*.16;y+=(ty-y)*.16;
   const ctx=canvas.getContext('2d');ctx.setTransform(canvas.width/item.width,0,0,canvas.height/item.height,0,0);ctx.clearRect(0,0,item.width,item.height);
   images.forEach((img,n)=>ctx.drawImage(img,...placement(item,item.layers[n],x,y)));
-  if(!mobile.matches){surface.style.setProperty('--rx',`${-y*3.5}deg`);surface.style.setProperty('--ry',`${x*4}deg`);}
+  surface.style.setProperty('--rx',`${-y*PARALLAX.tiltX}deg`);surface.style.setProperty('--ry',`${x*PARALLAX.tiltY}deg`);
   if(active||Math.abs(x)+Math.abs(y)>.005)raf=requestAnimationFrame(draw);
  }
  function load(){
@@ -81,7 +84,7 @@ function mount(node,item){
  }
  function prepare(){
   if(video){if(video.error)video.load();return;}
-  video=document.createElement('video');video.muted=true;video.playsInline=true;video.setAttribute('playsinline','');video.preload='none';video.src=item.video;video.loop=!item.loopStart;
+  video=document.createElement('video');video.muted=true;video.playsInline=true;video.setAttribute('playsinline','');video.preload=mobile.matches?'auto':'none';video.src=item.video;video.loop=!item.loopStart;
   video.addEventListener('ended',()=>{if(active){video.currentTime=item.loopStart;video.play().catch(fail);}});
   video.addEventListener('error',()=>{if(active)fail();});surface.prepend(video);
  }
@@ -89,7 +92,7 @@ function mount(node,item){
  async function start(){
   if(active||!motion||disposed||document.hidden)return;
   if(type==='video'){current?.stop();current=api;banner?.pause();}
-  active=true;const token=++epoch;clearTimeout(resetTimer);$('.error',surface)?.remove();busy(type==='video'||!images);
+  active=true;const token=++epoch;clearTimeout(resetTimer);$('.error',surface)?.remove();busy(type==='video'?(!video||video.readyState<3):!images);
   try{if(type==='video'){prepare();await video.play();}else await load();if(disposed||!active||epoch!==token)return;busy(false);show(true);if(type==='parallax'){cancelAnimationFrame(raf);draw();}}
   catch{if(active&&epoch===token)fail();}
  }
@@ -99,7 +102,7 @@ function mount(node,item){
   tx=0;ty=0;swipeX=0;
   clearTimeout(resetTimer);resetTimer=setTimeout(()=>{video?.pause();if(video?.readyState)video.currentTime=0;surface.style.removeProperty('--rx');surface.style.removeProperty('--ry');},360);
  }
- const api={node,start,stop,get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
+ const api={node,start,stop,preload(){if(type==='video'&&mobile.matches&&motion&&!disposed)prepare();},get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
  node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&!carouselDragging&&type!=='video')start();});
  node.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&!mobile.matches&&type!=='video'){stop();syncBanner();}});
  node.addEventListener('focus',()=>{if(node.matches(':focus-visible'))start();});node.addEventListener('blur',()=>{if(!mobile.matches)stop();});
@@ -107,8 +110,8 @@ function mount(node,item){
  node.addEventListener('pointerdown',e=>{moved=false;if(type==='parallax'&&e.pointerType!=='mouse')drag={x:e.clientX,y:e.clientY,start:swipeX};});
  node.addEventListener('pointermove',e=>{
   if(type!=='parallax')return;const r=node.getBoundingClientRect();
-  if(e.pointerType==='mouse'&&!mobile.matches){tx=clamp((e.clientX-r.left)/r.width*2-1);ty=clamp((e.clientY-r.top)/surface.offsetHeight*2-1);}
-  else if(drag&&Math.abs(e.clientX-drag.x)>5){moved=true;swipeX=clamp(drag.start+(e.clientX-drag.x)/r.width*3);targets();start();}
+  if(e.pointerType==='mouse'&&!mobile.matches){tx=clamp(((e.clientX-r.left)/r.width*2-1)*PARALLAX.pointerGain);ty=clamp(((e.clientY-r.top)/surface.offsetHeight*2-1)*PARALLAX.pointerGain);}
+  else if(drag&&Math.abs(e.clientX-drag.x)>5){moved=true;swipeX=clamp(drag.start+(e.clientX-drag.x)/r.width*PARALLAX.swipeGain);targets();start();}
  });
  node.addEventListener('pointerup',()=>{drag=null;});node.addEventListener('pointercancel',()=>{drag=null;});
  const observer=new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)stop();},{threshold:0});observer.observe(node);
@@ -122,6 +125,7 @@ function nearest(){
 function syncMobile(settled=true){
  if(!mobile.matches||!motion||document.hidden)return;
  if(mode==='animation'){
+  controllers.forEach(c=>c.preload());
   const next=nearest();if(current&&current!==next)current.stop();if(settled)next?.start();
  }else{
   controllers.forEach(c=>{const r=c.node.getBoundingClientRect();if(r.bottom>150&&r.top<innerHeight){c.scroll(clamp((innerHeight/2-(r.top+r.height/2))/(innerHeight/2)));c.start();}else c.stop();});
@@ -198,6 +202,7 @@ function render(){
  document.querySelectorAll('[data-format]').forEach(b=>b.onclick=()=>navigate(mode,b.dataset.format));
  document.querySelectorAll('.card').forEach(n=>controllers.push(mount(n,items.find(i=>i.id===n.dataset.id))));
  carouselCleanup=mountCarousel();
+ if(mobile.matches&&mode==='animation')controllers.forEach(c=>c.preload());
  $('#tilt').onclick=()=>enableTilt(true);
  if(mode==='animation'){
   $('#explore').onclick=e=>{e.preventDefault();$('#collection').scrollIntoView({behavior:reduced.matches?'instant':'smooth'});};
@@ -212,4 +217,4 @@ mobile.addEventListener('change',()=>{if(data)render();});
 window.addEventListener('resize',onScroll,{passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncCarousel();syncBanner();}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
-try{const response=await fetch('manifest.json?v=5');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
+try{const response=await fetch('manifest.json?v=6');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}

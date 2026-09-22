@@ -10,3 +10,7 @@
 
 /* A generous desktop hover zone surrounds the animation rail. */
 @media(min-width:761px){body:not(.parallax-mode) .collection{padding-top:65px;padding-bottom:100px}}
+
+/* Canvas motion already eases each frame; a second CSS easing adds input lag. */
+.parallax-mode .surface{transition:box-shadow .25s;will-change:transform}
+.parallax-mode #content{overflow-x:clip}
