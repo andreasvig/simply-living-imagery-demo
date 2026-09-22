@@ -1,9 +1,10 @@
+import {motionPlacement as placement, prepareMotion} from './parallax-motion.mjs';
 const $ = (s, root=document) => root.querySelector(s);
 const mobile = matchMedia('(max-width: 760px)');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 const clamp = (n,min=-1,max=1) => Math.max(min,Math.min(max,n));
 // Demo motion tuning: reach full phone response with a small wrist movement.
-const PARALLAX={pointerGain:1.3,legacyLayerGain:2.5,verticalGain:.75,tiltX:10,tiltY:13,gyroGamma:8,gyroBeta:10,scrollGain:1.4,swipeGain:5};
+const PARALLAX={pointerGain:1.3,tiltX:10,tiltY:13,gyroGamma:8,gyroBeta:10,scrollGain:1.4,swipeGain:5};
 const escape = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, mode='animation', format='showcards', motion=!reduced.matches;
 let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver, carouselCleanup;
@@ -56,12 +57,7 @@ function card(i){
  return `<button class="card ${format==='covers'?'portrait':''}" data-id="${i.id}" data-type="${t}" aria-label="${escape(i.label)} · ${t==='video'?'animate':'explore depth'}" aria-pressed="false"><div class="surface"><img src="${mode==='parallax'&&!mobile.matches?(i.neutral||i.cover):i.cover}" alt="${escape(i.label)}" loading="lazy" decoding="async"><span class="badge"><i>${t==='video'?'↻':'◇'}</i>${t==='video'?'ANIMATED':'PARALLAX'}</span></div><div class="caption"><div><strong>${escape(i.title.split(':')[0])}</strong><p>${escape(i.label.split(' · ')[1]||'')}</p></div><small>${i.kind}</small></div></button>`;
 }
 function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/die-hard-banner.webp" alt="Die Hard trailer" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · MOVIE</p><h1>Die Hard <small>(random film)</small></h1><div class="metadata"><span>R</span><span>1988</span><span>Action</span><span>2h 12m</span></div><p>A New York cop. A Los Angeles skyscraper. When terrorists take over his wife’s Christmas party, John McClane is the one guest they didn’t plan for.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
-function placement(i,l,x,y){
- const w=i.width,h=i.height,m=i.motion_fraction,gain=i.asset_canvas?1:PARALLAX.legacyLayerGain;let dx=x*w*m*l.z*gain,dy=y*h*m*l.z*gain*PARALLAX.verticalGain;
- if(i.asset_canvas){const c=i.asset_canvas,v=l.motion_limits;if(v){dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}return[-c.padding_x+Math.round(dx),-c.padding_y+Math.round(dy),c.width,c.height];}
- if(l.motion_limits){const v=l.motion_limits;dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}
- const scale=l.overscan===false?1:1+2*m,sw=Math.round(w*scale),sh=Math.round(h*scale);return[Math.floor((w-sw)/2)+Math.round(dx),Math.floor((h-sh)/2)+Math.round(dy),sw,sh];
-}
+
 function mount(node,item){
  const type=node.dataset.type,surface=$('.surface',node);
  let active=false,disposed=false,epoch=0,resetTimer,video,canvas,images,promise,raf;
@@ -80,7 +76,7 @@ function mount(node,item){
  function load(){
   if(promise)return promise;
   canvas=document.createElement('canvas');canvas.width=Math.min(1200,item.width);canvas.height=Math.round(canvas.width*item.height/item.width);surface.prepend(canvas);
-  promise=Promise.all(item.layers.map(l=>new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=l.src;}))).then(v=>{images=v;});return promise;
+  promise=Promise.all(item.layers.map(l=>new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=l.src;}))).then(v=>{images=v;prepareMotion(item,v);});return promise;
  }
  function prepare(){
   if(video){if(video.error)video.load();return;}

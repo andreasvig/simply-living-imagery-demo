@@ -11,3 +11,5 @@ This repository contains the presentation and selected compressed media only.
 The featured Die Hard banner is a muted, cropped 20-second excerpt (120–140 seconds) from [Die Hard: Trailer 1](https://www.rottentomatoes.com/m/die_hard/videos), © 20th Century Studios. [Film metadata](https://www.20thcenturystudios.com/movies/die-hard).
 
 Film and television artwork remains the property of its respective owners.
+
+Parallax movement uses a shared 3× renderer: portrait covers favour vertical travel, landscape showcards horizontal. All layers slow together near cropped artwork edges, and the background stays still. Existing artwork is reused.
