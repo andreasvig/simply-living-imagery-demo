@@ -1,0 +1,161 @@
+const $ = (s, root=document) => root.querySelector(s);
+const mobile = matchMedia('(max-width: 760px)');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const clamp = (n,min=-1,max=1) => Math.max(min,Math.min(max,n));
+const escape = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let data, mode='animation', format='showcards', motion=!reduced.matches;
+let controllers=[], current=null, settleTimer, scrollFrame, banner=null, bannerObserver;
+let tiltState='idle', tiltBase=null, tiltX=0, tiltY=0, tiltTimer;
+const needsTiltPermission = () => typeof window.DeviceOrientationEvent?.requestPermission === 'function';
+function announce(message){$('#announce').textContent=message;}
+function updateMotion(){
+ $('#motion').setAttribute('aria-pressed',String(motion));$('#motion').setAttribute('aria-label',`Motion ${motion?'on':'off'}`);$('#motion-label').textContent=`Motion ${motion?'on':'off'}`;
+}
+$('#motion').onclick=()=>{motion=!motion;updateMotion();if(!motion){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncBanner();}};
+updateMotion();
+function tiltUI(){
+ const b=$('#tilt');if(!b)return;
+ b.hidden=!mobile.matches||mode!=='parallax'||!needsTiltPermission()||tiltState==='granted'||tiltState==='unavailable';
+ b.textContent=tiltState==='denied'?'Retry motion access':'Enable motion';
+ const status=$('#tilt-status');
+ status.textContent=tiltState==='denied'?'Motion access was declined. Scroll and swipe still work.':tiltState==='unavailable'?'Scroll or swipe sideways to explore depth.':tiltState==='granted'?'Tilt your phone or swipe sideways to explore depth.':'';
+}
+async function enableTilt(fromTap=false){
+ if(!mobile.matches||tiltState==='granted')return;
+ if(!window.DeviceOrientationEvent){tiltState='unavailable';tiltUI();return;}
+ if(needsTiltPermission()){
+  if(!fromTap){tiltUI();return;}
+  try{const result=await DeviceOrientationEvent.requestPermission();if(result!=='granted'){tiltState='denied';tiltUI();return;}}
+  catch{tiltState='denied';tiltUI();return;}
+ }
+ tiltState='listening';tiltBase=null;
+ clearTimeout(tiltTimer);tiltTimer=setTimeout(()=>{if(tiltState==='listening'){tiltState='unavailable';tiltUI();}},2500);
+ tiltUI();
+}
+window.addEventListener('deviceorientation',e=>{
+ if(!mobile.matches||mode!=='parallax'||!motion||document.hidden||!['listening','granted','unavailable'].includes(tiltState)||e.beta==null||e.gamma==null)return;
+ tiltState='granted';clearTimeout(tiltTimer);tiltUI();
+ if(!tiltBase)tiltBase={beta:e.beta,gamma:e.gamma};
+ const wrap=n=>((n+540)%360)-180, angle=(screen.orientation?.angle||0)*Math.PI/180;
+ const gx=wrap(e.gamma-tiltBase.gamma)/22,gy=wrap(e.beta-tiltBase.beta)/25;
+ tiltX=clamp(gx*Math.cos(angle)+gy*Math.sin(angle));tiltY=clamp(gy*Math.cos(angle)-gx*Math.sin(angle));
+ controllers.forEach(c=>c.sensor(tiltX,tiltY));
+});
+window.addEventListener('orientationchange',()=>{tiltBase=null;});
+function readRoute(){const [m,f]=location.hash.slice(1).split('/');mode=m==='parallax'?'parallax':'animation';format=f==='covers'?'covers':'showcards';}
+function navigate(m,f){const next=`#${m}/${f}`;if(location.hash===next)return;location.hash=next;}
+for(const b of document.querySelectorAll('[data-mode]'))b.onclick=()=>{
+ if(b.dataset.mode==='parallax')enableTilt(true);
+ navigate(b.dataset.mode,format);
+};
+function card(i){
+ const t=mode==='animation'?'video':'parallax';
+ return `<button class="card ${format==='covers'?'portrait':''}" data-id="${i.id}" data-type="${t}" aria-label="${escape(i.label)} · ${t==='video'?'animate':'explore depth'}" aria-pressed="false"><div class="surface"><img src="${i.cover}" alt="${escape(i.label)}" loading="lazy" decoding="async"><span class="badge"><i>${t==='video'?'↻':'◇'}</i>${t==='video'?'ANIMATED':'PARALLAX'}</span></div><div class="caption"><div><strong>${escape(i.title.split(':')[0])}</strong><p>${escape(i.label.split(' · ')[1]||'')}</p></div><small>${i.kind}</small></div></button>`;
+}
+function hero(){return `<section class="hero" aria-label="Featured film"><div class="hero-art"><img src="assets/banner.webp" alt="Sintel, a Blender Foundation open film" fetchpriority="high"></div><div class="hero-copy"><p class="eyebrow">FEATURED · SHORT FILM</p><h1>Sintel</h1><div class="metadata"><span>OPEN MOVIE</span><span>2010</span><span>Fantasy</span><span>Adventure</span></div><p>A young traveller crosses an unforgiving world in search of the dragon she once saved.</p><div class="hero-actions"><a class="primary" href="#collection" id="explore">▷ Explore the collection</a><button class="secondary" id="banner-toggle" aria-pressed="false">Ⅱ Pause preview</button></div></div><div class="hero-pagination"><i></i> Featured preview</div></section>`;}
+function placement(i,l,x,y){
+ const w=i.width,h=i.height,m=i.motion_fraction;let dx=x*w*m*l.z,dy=y*h*m*l.z*.4;
+ if(i.asset_canvas){const c=i.asset_canvas,v=l.motion_limits;if(v){dx=clamp(dx,-v.left,v.right);dy=clamp(dy,-v.up,v.down);}return[-c.padding_x+Math.round(dx),-c.padding_y+Math.round(dy),c.width,c.height];}
+ const scale=l.overscan===false?1:1+2*m,sw=Math.round(w*scale),sh=Math.round(h*scale);return[Math.floor((w-sw)/2)+Math.round(dx),Math.floor((h-sh)/2)+Math.round(dy),sw,sh];
+}
+function mount(node,item){
+ const type=node.dataset.type,surface=$('.surface',node);
+ let active=false,disposed=false,epoch=0,resetTimer,video,canvas,images,promise,raf;
+ let x=0,y=0,tx=0,ty=0,drag=null,moved=false,swipeX=0,scrollY=0,sensorX=0,sensorY=0;
+ const busy=v=>{$('.status',surface)?.remove();if(v)surface.insertAdjacentHTML('beforeend','<span class="status"><span class="spinner"></span></span>');node.setAttribute('aria-busy',String(v));};
+ const show=v=>{node.classList.toggle('active',v);node.setAttribute('aria-pressed',String(v));};
+ function targets(){tx=clamp(swipeX+sensorX);ty=clamp(scrollY*.65+sensorY*.65);}
+ function draw(){
+  if(disposed||!images)return;
+  x+=(tx-x)*.075;y+=(ty-y)*.075;
+  const ctx=canvas.getContext('2d');ctx.setTransform(canvas.width/item.width,0,0,canvas.height/item.height,0,0);ctx.clearRect(0,0,item.width,item.height);
+  images.forEach((img,n)=>ctx.drawImage(img,...placement(item,item.layers[n],x,y)));
+  if(!mobile.matches){surface.style.setProperty('--rx',`${-y*3.5}deg`);surface.style.setProperty('--ry',`${x*4}deg`);}
+  if(active||Math.abs(x)+Math.abs(y)>.005)raf=requestAnimationFrame(draw);
+ }
+ function load(){
+  if(promise)return promise;
+  canvas=document.createElement('canvas');canvas.width=Math.min(1200,item.width);canvas.height=Math.round(canvas.width*item.height/item.width);surface.prepend(canvas);
+  promise=Promise.all(item.layers.map(l=>new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=l.src;}))).then(v=>{images=v;});return promise;
+ }
+ function prepare(){
+  if(video){if(video.error)video.load();return;}
+  video=document.createElement('video');video.muted=true;video.playsInline=true;video.setAttribute('playsinline','');video.preload='none';video.src=item.video;video.loop=!item.loopStart;
+  video.addEventListener('ended',()=>{if(active){video.currentTime=item.loopStart;video.play().catch(fail);}});
+  video.addEventListener('error',()=>{if(active)fail();});surface.prepend(video);
+ }
+ function fail(){stop();if(disposed)return;$('.error',surface)?.remove();surface.insertAdjacentHTML('beforeend','<span class="error">Tap to play motion</span>');announce('Motion could not start automatically. Tap the artwork to try again.');if(type==='parallax'){promise=null;canvas?.remove();canvas=null;images=null;}}
+ async function start(){
+  if(active||!motion||disposed||document.hidden)return;
+  if(type==='video'){current?.stop();current=api;banner?.pause();}
+  active=true;const token=++epoch;clearTimeout(resetTimer);$('.error',surface)?.remove();busy(true);
+  try{if(type==='video'){prepare();await video.play();}else await load();if(disposed||!active||epoch!==token)return;busy(false);show(true);if(type==='parallax'){cancelAnimationFrame(raf);draw();}}
+  catch{if(active&&epoch===token)fail();}
+ }
+ function stop(){
+  if(!active&&!node.classList.contains('active'))return;
+  active=false;++epoch;busy(false);show(false);if(current===api)current=null;
+  tx=0;ty=0;swipeX=0;
+  clearTimeout(resetTimer);resetTimer=setTimeout(()=>{video?.pause();if(video?.readyState)video.currentTime=0;surface.style.removeProperty('--rx');surface.style.removeProperty('--ry');},360);
+ }
+ const api={node,start,stop,get active(){return active;},sensor(a,b){sensorX=a;sensorY=b;targets();},scroll(v){scrollY=v;targets();},dispose(){disposed=true;stop();clearTimeout(resetTimer);cancelAnimationFrame(raf);video?.pause();observer.disconnect();}};
+ node.addEventListener('pointerenter',e=>{if(e.pointerType==='mouse'&&!mobile.matches)start();});
+ node.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse'&&!mobile.matches){stop();syncBanner();}});
+ node.addEventListener('focus',()=>{if(node.matches(':focus-visible'))start();});node.addEventListener('blur',()=>{if(!mobile.matches)stop();});
+ node.addEventListener('click',()=>{if(moved){moved=false;return;}if(type==='parallax'&&mobile.matches){enableTilt(true);start();}else active?stop():start();});
+ node.addEventListener('pointerdown',e=>{moved=false;if(type==='parallax'&&e.pointerType!=='mouse')drag={x:e.clientX,y:e.clientY,start:swipeX};});
+ node.addEventListener('pointermove',e=>{
+  if(type!=='parallax')return;const r=node.getBoundingClientRect();
+  if(e.pointerType==='mouse'&&!mobile.matches){tx=clamp((e.clientX-r.left)/r.width*2-1);ty=clamp((e.clientY-r.top)/surface.offsetHeight*2-1);}
+  else if(drag&&Math.abs(e.clientX-drag.x)>5){moved=true;swipeX=clamp(drag.start+(e.clientX-drag.x)/r.width*3);targets();start();}
+ });
+ node.addEventListener('pointerup',()=>{drag=null;});node.addEventListener('pointercancel',()=>{drag=null;});
+ const observer=new IntersectionObserver(entries=>{if(!entries[0].isIntersecting)stop();},{threshold:0});observer.observe(node);
+ return api;
+}
+function nearest(){
+ const centre=150+(innerHeight-150)/2;
+ return controllers.map(c=>{const r=c.node.getBoundingClientRect();const visible=Math.max(0,Math.min(r.bottom,innerHeight)-Math.max(r.top,150));return {c,r,visible,dist:Math.abs(r.top+r.height/2-centre)};}).filter(v=>v.visible/Math.min(v.r.height,innerHeight-150)>.55).sort((a,b)=>a.dist-b.dist)[0]?.c;
+}
+function syncMobile(settled=true){
+ if(!mobile.matches||!motion||document.hidden)return;
+ if(mode==='animation'){
+  const next=nearest();if(current&&current!==next)current.stop();if(settled)next?.start();
+ }else{
+  controllers.forEach(c=>{const r=c.node.getBoundingClientRect();if(r.bottom>150&&r.top<innerHeight){c.scroll(clamp((innerHeight/2-(r.top+r.height/2))/(innerHeight/2)));c.start();}else c.stop();});
+ }
+}
+function onScroll(){
+ clearTimeout(settleTimer);if(!scrollFrame)scrollFrame=requestAnimationFrame(()=>{scrollFrame=null;syncMobile(false);});
+ settleTimer=setTimeout(()=>syncMobile(true),240);
+}
+let bannerPaused=false;
+function syncBanner(){
+ if(!banner)return;const r=$('.hero').getBoundingClientRect();
+ if(!mobile.matches&&motion&&!current&&!bannerPaused&&!document.hidden&&r.bottom>100){banner.play().then(()=>{if(!banner.paused){$('.hero-art')?.classList.add('playing');$('#banner-toggle').textContent='Ⅱ Pause preview';$('#banner-toggle').setAttribute('aria-pressed','true');}}).catch(()=>{$('#banner-toggle').textContent='▷ Play preview';});}
+ else banner.pause();
+}
+function render(){
+ controllers.forEach(c=>c.dispose());controllers=[];current=null;banner?.pause();banner=null;bannerObserver?.disconnect();clearTimeout(settleTimer);
+ document.body.classList.toggle('parallax-mode',mode==='parallax');
+ document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+ const items=(mode==='animation'?data.animations:data.parallax).filter(i=>format==='covers'?i.width<i.height:i.width>i.height);
+ $('#content').innerHTML=(mode==='animation'?hero():'')+`<section class="collection" id="collection"><div class="filterbar" role="group" aria-label="Artwork format"><button data-format="covers" aria-pressed="${format==='covers'}">Covers</button><button data-format="showcards" aria-pressed="${format==='showcards'}">Showcards</button><button id="tilt" class="tilt-button" hidden>Enable motion</button></div><div class="section-heading"><div><h2>${mode==='animation'?'In motion':'A different dimension'}<small>${items.length}</small></h2><p>${mode==='animation'?'<span class="desktop-hint">Hover to bring the artwork to life.</span><span class="mobile-hint">Scroll to explore. Pause on a cover to bring it to life.</span>':'<span class="desktop-hint">Move across the artwork. Discover another layer.</span><span class="mobile-hint">Scroll, tilt your phone, or swipe sideways.</span>'}</p></div><div class="row-controls"><button aria-label="Previous artwork" data-scroll="-1">‹</button><button aria-label="Next artwork" data-scroll="1">›</button></div></div><p id="tilt-status" class="tilt-status"></p><div class="items ${format}">${items.map(card).join('')}</div></section>`;
+ document.querySelectorAll('[data-format]').forEach(b=>b.onclick=()=>navigate(mode,b.dataset.format));
+ document.querySelectorAll('.card').forEach(n=>controllers.push(mount(n,items.find(i=>i.id===n.dataset.id))));
+ document.querySelectorAll('[data-scroll]').forEach(b=>b.onclick=()=>$('.items').scrollBy({left:$('.items').clientWidth*.75*Number(b.dataset.scroll),behavior:'smooth'}));
+ $('#tilt').onclick=()=>enableTilt(true);
+ if(mode==='animation'){
+  $('#explore').onclick=e=>{e.preventDefault();$('#collection').scrollIntoView({behavior:reduced.matches?'instant':'smooth'});};
+  if(!mobile.matches){banner=document.createElement('video');banner.muted=true;banner.playsInline=true;banner.loop=true;banner.src='assets/banner.mp4';$('.hero-art').prepend(banner);bannerObserver=new IntersectionObserver(syncBanner,{threshold:0});bannerObserver.observe($('.hero'));syncBanner();}
+  $('#banner-toggle').onclick=()=>{bannerPaused=!bannerPaused;syncBanner();$('#banner-toggle').textContent=bannerPaused?'▷ Play preview':'Ⅱ Pause preview';$('#banner-toggle').setAttribute('aria-pressed',String(!bannerPaused));};
+ }else enableTilt(false);
+ tiltUI();window.scrollTo({top:0,behavior:'instant'});settleTimer=setTimeout(()=>syncMobile(true),300);
+}
+window.addEventListener('scroll',onScroll,{passive:true});
+window.addEventListener('hashchange',()=>{if(!data)return;readRoute();render();});
+mobile.addEventListener('change',()=>{if(data)render();});
+window.addEventListener('resize',onScroll,{passive:true});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){controllers.forEach(c=>c.stop());banner?.pause();}else{syncMobile();syncBanner();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')controllers.forEach(c=>c.stop());});
+try{const response=await fetch('manifest.json');if(!response.ok)throw Error('manifest');data=await response.json();readRoute();render();}catch{$('#content').innerHTML='<p class="loading">The collection couldn’t load. Please refresh to try again.</p>';}
